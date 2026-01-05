@@ -291,16 +291,6 @@ const Dashboard: React.FC = () => {
           color: var(--text-secondary);
         }
 
-        input {
-          width: 100%;
-          padding: 12px;
-          border-radius: var(--radius-md);
-          border: 1px solid rgba(0,0,0,0.1);
-          font-size: 1rem;
-          background: var(--bg-color);
-          color: var(--text-primary);
-        }
-
         .size-options {
           display: flex;
           gap: 8px;
