@@ -175,8 +175,9 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             weekStart: new Date().toISOString(),
             timersSnapshot: timers.map(t => ({
                 title: t.title,
+                type: t.type,
                 totalSeconds: t.totalSeconds,
-                completedSeconds: t.totalSeconds - t.remainingSeconds,
+                completedSeconds: t.type === 'stopwatch' ? (t.elapsedSeconds || 0) : (t.totalSeconds - t.remainingSeconds),
                 color: t.color
             }))
         };
