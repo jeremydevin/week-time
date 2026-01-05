@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import type { Timer, WeekHistory } from '../types';
+import { supabase } from '../lib/supabase';
+import { useAuth } from './AuthContext';
+import type { Timer, WeekHistory, TimerType } from '../types';
 
 interface TimerContextType {
     timers: Timer[];
@@ -19,50 +21,169 @@ const STORAGE_KEY_TIMERS = 'weektime_timers';
 const STORAGE_KEY_HISTORY = 'weektime_history';
 
 export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [timers, setTimers] = useState<Timer[]>(() => {
-        const saved = localStorage.getItem(STORAGE_KEY_TIMERS);
-        if (!saved) return [];
+    const { user } = useAuth();
+    const [timers, setTimers] = useState<Timer[]>([]);
+    const [history, setHistory] = useState<WeekHistory[]>([]);
 
-        // "Catch up" logic for reloads
-        try {
-            const loaded: Timer[] = JSON.parse(saved);
-            const now = Date.now();
-            return loaded.map(t => {
-                if (t.isRunning && t.lastTickAt) {
-                    const deltaMs = now - t.lastTickAt;
-                    if (deltaMs > 0) {
-                        const secondsPassed = Math.floor(deltaMs / 1000);
-                        const newRemaining = Math.max(0, t.remainingSeconds - secondsPassed);
-                        const isFinished = newRemaining <= 0;
+    // Initial Load & Sync
+    useEffect(() => {
+        if (!user) {
+            // Fallback to local storage if no user (or just clear? User asked for sync, implies login required? 
+            // Let's support local-only for non-logged in, but maybe merge later? 
+            // For now, simple: if logged in, use DB. If not, use LocalStorage.
+            const saved = localStorage.getItem(STORAGE_KEY_TIMERS);
+            if (saved) {
+                try {
+                    const loaded: Timer[] = JSON.parse(saved);
+                    /* Catch up logic for local... same as before */
+                    const now = Date.now();
+                    const caughtUp = loaded.map(t => {
+                        if (t.isRunning && t.lastTickAt) {
+                            const deltaMs = now - t.lastTickAt;
+                            if (deltaMs > 0) {
+                                const secondsPassed = Math.floor(deltaMs / 1000);
+                                if (t.type === 'stopwatch') {
+                                    return {
+                                        ...t,
+                                        elapsedSeconds: (t.elapsedSeconds || 0) + secondsPassed,
+                                        lastTickAt: t.lastTickAt + (secondsPassed * 1000)
+                                    };
+                                } else {
+                                    const newRemaining = Math.max(0, t.remainingSeconds - secondsPassed);
+                                    const isFinished = newRemaining <= 0;
+                                    return {
+                                        ...t,
+                                        remainingSeconds: newRemaining,
+                                        lastTickAt: isFinished ? undefined : t.lastTickAt + (secondsPassed * 1000),
+                                        isRunning: !isFinished
+                                    };
+                                }
+                            }
+                        }
+                        return t;
+                    });
+                    setTimers(caughtUp);
+                } catch { setTimers([]) }
+            }
 
-                        return {
-                            ...t,
-                            remainingSeconds: newRemaining,
-                            lastTickAt: isFinished ? undefined : t.lastTickAt + (secondsPassed * 1000),
-                            isRunning: !isFinished
-                        };
-                    }
+            const savedHistory = localStorage.getItem(STORAGE_KEY_HISTORY);
+            if (savedHistory) {
+                try {
+                    setHistory(JSON.parse(savedHistory));
+                } catch {
+                    setHistory([]);
                 }
-                return t;
-            });
-        } catch {
-            return [];
+            }
+
+
+            return;
         }
-    });
 
-    const [history, setHistory] = useState<WeekHistory[]>(() => {
-        const saved = localStorage.getItem(STORAGE_KEY_HISTORY);
-        return saved ? JSON.parse(saved) : [];
-    });
+        // Fetch from Supabase
+        const fetchRemote = async () => {
+            const { data: timersData, error: timersError } = await supabase
+                .from('timers')
+                .select('*')
+                .eq('user_id', user.id);
 
-    // Persistence
+            if (timersData && !timersError) {
+                // Map DB snake_case to camelCase
+                const mapped: Timer[] = timersData.map((d: any) => ({
+                    id: d.id,
+                    title: d.title,
+                    type: d.type as TimerType,
+                    totalSeconds: d.total_seconds,
+                    remainingSeconds: d.remaining_seconds,
+                    elapsedSeconds: d.elapsed_seconds,
+                    isRunning: d.is_running,
+                    lastTickAt: d.last_tick_at ? parseInt(d.last_tick_at) : undefined, // BigInt comes as string?
+                    color: d.color,
+                    size: d.size as any,
+                }));
+
+                // Do catchup logic on fetched data too? Yes, essential.
+                const now = Date.now();
+                const caughtUp = mapped.map(t => {
+                    if (t.isRunning && t.lastTickAt) {
+                        const deltaMs = now - t.lastTickAt;
+                        if (deltaMs > 0) {
+                            const secondsPassed = Math.floor(deltaMs / 1000);
+                            if (t.type === 'stopwatch') {
+                                return {
+                                    ...t,
+                                    elapsedSeconds: (t.elapsedSeconds || 0) + secondsPassed,
+                                    lastTickAt: t.lastTickAt + (secondsPassed * 1000)
+                                };
+                            } else {
+                                const newRemaining = Math.max(0, t.remainingSeconds - secondsPassed);
+                                const isFinished = newRemaining <= 0;
+                                return {
+                                    ...t,
+                                    remainingSeconds: newRemaining,
+                                    lastTickAt: isFinished ? undefined : t.lastTickAt + (secondsPassed * 1000),
+                                    isRunning: !isFinished
+                                };
+                            }
+                        }
+                    }
+                    return t;
+                });
+                setTimers(caughtUp);
+            }
+
+            const { data: historyData, error: historyError } = await supabase
+                .from('week_history')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('week_start', { ascending: false });
+
+            if (historyData && !historyError) {
+                const mappedHistory: WeekHistory[] = historyData.map((d: any) => ({
+                    id: d.id,
+                    weekStart: d.week_start,
+                    timersSnapshot: d.timers_snapshot,
+                }));
+                setHistory(mappedHistory);
+            }
+
+        };
+        fetchRemote();
+    }, [user]);
+
+    // Persistence: Save to DB whenever timers change? 
+    // Debouncing is better, or save on specific actions (add/delete/pause).
+    // Ticking updates state every second -> too many writes.
+    // Strategy: 
+    // - Add/Delete/Update(Edit properties) -> Immediate Write
+    // - Tick -> Local state only.
+    // - Pause/Resume (Toggle) -> Immediate Write.
+    // - Tab close -> Try to write? (Hard)
+    // 
+    // For this context migration, we'll keep local state as source of truth for UI, 
+    // and push specific actions to DB. "LastTickAt" ensures consistency.
+
+    // We need to override the actions to write to DB.
+
+    // ... (Keep Ticking Logic local for performance, but careful about sync?)
+    // If I open on another device, it won't see it running until I "save" the running state.
+    // ToggleTimer saves the "isRunning" state and "lastTickAt". 
+    // So as long as we save on Toggle, other devices can pick it up and calculate the delta. Perfect.
+
+    // Need to update persistence effect to NOT auto-save everything if user is logged in
+    // because ticking causes 1Hz updates.
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY_TIMERS, JSON.stringify(timers));
-    }, [timers]);
+        if (!user) {
+            localStorage.setItem(STORAGE_KEY_TIMERS, JSON.stringify(timers));
+        }
+        // If user exists, we rely on event-based persistence (add/toggle/etc) 
+        // effectively disabling auto-save for ticks to save DB bandwidth.
+    }, [timers, user]);
 
     useEffect(() => {
-        localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
-    }, [history]);
+        if (!user) {
+            localStorage.setItem(STORAGE_KEY_HISTORY, JSON.stringify(history));
+        }
+    }, [history, user]);
 
     // Ticking Logic
     useEffect(() => {

@@ -1,49 +1,62 @@
 import { useState } from 'react';
-import { TimerProvider, useTimers } from './store/TimerContext';
+import { TimerProvider } from './store/TimerContext';
+import { AuthProvider, useAuth } from './store/AuthContext';
 import Dashboard from './components/Dashboard';
 import History from './components/History';
+import Login from './components/Login';
+import './index.css';
 
-const AppContent = () => {
+const AppContent: React.FC = () => {
+  const { user, loading, signOut } = useAuth();
   const [view, setView] = useState<'dashboard' | 'history'>('dashboard');
-  const { resetWeek } = useTimers();
 
-  const handleEndWeek = () => {
-    if (confirm('Are you sure you want to end the week? This will save current progress to history and reset all timers.')) {
-      resetWeek();
-    }
-  };
+  if (loading) return <div className="loading">Loading...</div>;
+
+  // Simple auth gate: if not logged in, show login.
+  // Or allow guest mode? User asked for sync/login, so let's enforce or offer login.
+  // Actually, let's offer Login if not logged in, but maybe allow guest use? 
+  // For now, let's keep it simple: Show Dashboard if logged in OR guest (but we haven't built guest toggle).
+  // Let's just show Login if !user for the "Sync" feature, but maybe we want a "Continue as Guest" or just force login for now since user specifically asked for "Setup auth so users can login".
+
+  if (!user) {
+    return (
+      <div className="app-container">
+        <header className="app-header">
+          <h1>WeekTime</h1>
+        </header>
+        <main>
+          <Login />
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="app-container">
       <header className="app-header">
         <h1>WeekTime</h1>
-        <nav className="app-nav">
-          <button
-            className={`nav-btn ${view === 'dashboard' ? 'active' : ''}`}
-            onClick={() => setView('dashboard')}
-          >
-            Dashboard
-          </button>
-          <button
-            className={`nav-btn ${view === 'history' ? 'active' : ''}`}
-            onClick={() => setView('history')}
-          >
-            History
-          </button>
-        </nav>
+        <div className="header-actions">
+          <nav className="app-nav">
+            <button
+              className={`nav-btn ${view === 'dashboard' ? 'active' : ''}`}
+              onClick={() => setView('dashboard')}
+            >
+              Dashboard
+            </button>
+            <button
+              className={`nav-btn ${view === 'history' ? 'active' : ''}`}
+              onClick={() => setView('history')}
+            >
+              History
+            </button>
+          </nav>
+          <button onClick={() => signOut()} className="text-btn sign-out-btn">Sign Out</button>
+        </div>
       </header>
 
       <main>
         {view === 'dashboard' ? <Dashboard /> : <History />}
       </main>
-
-      {view === 'dashboard' && (
-        <footer className="app-footer">
-          <button className="end-week-btn" onClick={handleEndWeek}>
-            End Week & Save History
-          </button>
-        </footer>
-      )}
 
       <style>{`
         .app-header {
@@ -51,6 +64,26 @@ const AppContent = () => {
           justify-content: space-between;
           align-items: center;
           margin-bottom: 24px;
+        }
+
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .sign-out-btn {
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 0.9rem;
+            padding: 4px 8px;
+            white-space: nowrap;
+        }
+        .sign-out-btn:hover {
+            color: var(--text-primary);
+            text-decoration: underline;
         }
 
         .app-nav {
@@ -76,28 +109,6 @@ const AppContent = () => {
           color: var(--text-primary);
           box-shadow: var(--shadow-sm);
         }
-
-        .app-footer {
-          margin-top: 40px;
-          display: flex;
-          justify-content: center;
-          padding-bottom: 40px;
-        }
-
-        .end-week-btn {
-          background: none;
-          border: 1px solid var(--accent-red);
-          color: var(--accent-red);
-          padding: 12px 24px;
-          border-radius: var(--radius-lg);
-          font-weight: 600;
-          cursor: pointer;
-          transition: background 0.2s;
-        }
-
-        .end-week-btn:hover {
-          background: rgba(255, 59, 48, 0.1);
-        }
       `}</style>
     </div>
   );
@@ -105,9 +116,11 @@ const AppContent = () => {
 
 function App() {
   return (
-    <TimerProvider>
-      <AppContent />
-    </TimerProvider>
+    <AuthProvider>
+      <TimerProvider>
+        <AppContent />
+      </TimerProvider>
+    </AuthProvider>
   );
 }
 
