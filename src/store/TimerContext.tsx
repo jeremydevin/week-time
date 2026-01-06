@@ -99,7 +99,7 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 loadedHistory = historyData.map((d: any) => ({
                     id: d.id,
                     weekStart: d.week_start,
-                    timersSnapshot: d.timers_snapshot,
+                    timersSnapshot: d.timers_snapshot || [],
                 }));
                 setHistory(loadedHistory);
             }

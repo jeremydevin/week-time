@@ -2,48 +2,48 @@ import React from 'react';
 import { useTimers } from '../store/TimerContext';
 
 const History: React.FC = () => {
-    const { history } = useTimers();
+  const { history } = useTimers();
 
-    if (history.length === 0) {
-        return (
-            <div className="empty-history">
-                <p>No history yet. Complete a week to see your summary!</p>
-            </div>
-        );
-    }
-
+  if (history.length === 0) {
     return (
-        <div className="history-container">
-            {history.map(week => (
-                <div key={week.id} className="history-card">
-                    <div className="history-header">
-                        <h3>Week of {new Date(week.weekStart).toLocaleDateString()}</h3>
-                    </div>
-                    <div className="history-items">
-                        {week.timersSnapshot.map((timer, idx) => (
-                            <div key={idx} className="history-item">
-                                <div className="history-item-info">
-                                    <div
-                                        className="color-dot"
-                                        style={{ backgroundColor: timer.color }}
-                                    />
-                                    <span className="item-title">{timer.title}</span>
-                                </div>
-                                <div className="item-stats">
-                                    <span className="completed">
-                                        {Math.floor(timer.completedSeconds / 3600)}h {Math.floor((timer.completedSeconds % 3600) / 60)}m
-                                    </span>
-                                    <span className="total">
-                                        / {Math.floor(timer.totalSeconds / 3600)}h
-                                    </span>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            ))}
+      <div className="empty-history">
+        <p>No history yet. Complete a week to see your summary!</p>
+      </div>
+    );
+  }
 
-            <style>{`
+  return (
+    <div className="history-container">
+      {history.map(week => (
+        <div key={week.id} className="history-card">
+          <div className="history-header">
+            <h3>Week of {new Date(week.weekStart).toLocaleDateString()}</h3>
+          </div>
+          <div className="history-items">
+            {(week.timersSnapshot || []).map((timer, idx) => (
+              <div key={idx} className="history-item">
+                <div className="history-item-info">
+                  <div
+                    className="color-dot"
+                    style={{ backgroundColor: timer.color }}
+                  />
+                  <span className="item-title">{timer.title}</span>
+                </div>
+                <div className="item-stats">
+                  <span className="completed">
+                    {Math.floor(timer.completedSeconds / 3600)}h {Math.floor((timer.completedSeconds % 3600) / 60)}m
+                  </span>
+                  <span className="total">
+                    / {Math.floor(timer.totalSeconds / 3600)}h
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+
+      <style>{`
         .empty-history {
           text-align: center;
           padding: 40px;
@@ -117,8 +117,8 @@ const History: React.FC = () => {
           margin-left: 4px;
         }
       `}</style>
-        </div>
-    );
+    </div>
+  );
 };
 
 export default History;
