@@ -286,69 +286,59 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
     };
 
     const toggleTimer = async (id: string) => {
-        let timerToSync: Timer | undefined;
+        const timer = timers.find(t => t.id === id);
+        if (!timer) return;
 
-        setTimers(prev => prev.map(t => {
-            if (t.id === id) {
-                const now = Date.now();
-                const isStarting = !t.isRunning;
-                const nextTimer = {
-                    ...t,
-                    isRunning: isStarting,
-                    lastTickAt: isStarting ? now : undefined
-                };
-                timerToSync = nextTimer;
-                return nextTimer;
-            }
-            // Logic: if we start one, should others pause? Not strictly enforced but good practice? 
-            // Current logic doesn't enforce single-active-timer, so we leave as is.
-            return t;
-        }));
+        const now = Date.now();
+        const isStarting = !timer.isRunning;
+        const nextTimer = {
+            ...timer,
+            isRunning: isStarting,
+            lastTickAt: isStarting ? now : undefined
+        };
 
-        if (user && timerToSync) {
+        setTimers(prev => prev.map(t => t.id === id ? nextTimer : t));
+
+        if (user) {
             await supabase.from('timers').update({
-                is_running: timerToSync.isRunning,
-                last_tick_at: timerToSync.lastTickAt,
-                remaining_seconds: timerToSync.remainingSeconds,
-                elapsed_seconds: timerToSync.elapsedSeconds
+                is_running: nextTimer.isRunning,
+                last_tick_at: nextTimer.lastTickAt || null, // Explicit null for DB
+                remaining_seconds: nextTimer.remainingSeconds,
+                elapsed_seconds: nextTimer.elapsedSeconds
             }).eq('id', id);
         }
     };
 
     const deductTime = async (id: string, seconds: number) => {
-        let timerToSync: Timer | undefined;
+        const timer = timers.find(t => t.id === id);
+        if (!timer) return;
 
-        setTimers(prev => prev.map(t => {
-            if (t.id === id) {
-                if (t.type === 'stopwatch') {
-                    const next = {
-                        ...t,
-                        elapsedSeconds: (t.elapsedSeconds || 0) + seconds,
-                    };
-                    timerToSync = next;
-                    return next;
-                }
+        let nextTimer: Timer;
 
-                const newRemaining = Math.max(0, t.remainingSeconds - seconds);
-                const isFinished = newRemaining <= 0;
-                const next = {
-                    ...t,
-                    remainingSeconds: newRemaining,
-                    isRunning: isFinished ? false : t.isRunning,
-                    lastTickAt: isFinished ? undefined : t.lastTickAt
-                };
-                timerToSync = next;
-                return next;
-            }
-            return t;
-        }));
+        if (timer.type === 'stopwatch') {
+            nextTimer = {
+                ...timer,
+                elapsedSeconds: (timer.elapsedSeconds || 0) + seconds,
+            };
+        } else {
+            const newRemaining = Math.max(0, timer.remainingSeconds - seconds);
+            const isFinished = newRemaining <= 0;
+            nextTimer = {
+                ...timer,
+                remainingSeconds: newRemaining,
+                isRunning: isFinished ? false : timer.isRunning,
+                lastTickAt: isFinished ? undefined : timer.lastTickAt
+            };
+        }
 
-        if (user && timerToSync) {
+        setTimers(prev => prev.map(t => t.id === id ? nextTimer : t));
+
+        if (user) {
             await supabase.from('timers').update({
-                remaining_seconds: timerToSync.remainingSeconds,
-                elapsed_seconds: timerToSync.elapsedSeconds,
-                is_running: timerToSync.isRunning,
-                last_tick_at: timerToSync.lastTickAt
+                remaining_seconds: nextTimer.remainingSeconds,
+                elapsed_seconds: nextTimer.elapsedSeconds,
+                is_running: nextTimer.isRunning,
+                last_tick_at: nextTimer.lastTickAt || null
             }).eq('id', id);
         }
     };
