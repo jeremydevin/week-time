@@ -81,13 +81,30 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
 
         // Fetch from Supabase
         const fetchRemote = async () => {
+            // 1. Fetch Timers
             const { data: timersData, error: timersError } = await supabase
                 .from('timers')
                 .select('*')
                 .eq('user_id', user.id);
 
+            // 2. Fetch History
+            const { data: historyData, error: historyError } = await supabase
+                .from('week_history')
+                .select('*')
+                .eq('user_id', user.id)
+                .order('week_start', { ascending: false });
+
+            let loadedHistory: WeekHistory[] = [];
+            if (historyData && !historyError) {
+                loadedHistory = historyData.map((d: any) => ({
+                    id: d.id,
+                    weekStart: d.week_start,
+                    timersSnapshot: d.timers_snapshot,
+                }));
+                setHistory(loadedHistory);
+            }
+
             if (timersData && !timersError) {
-                // Map DB snake_case to camelCase
                 const mapped: Timer[] = timersData.map((d: any) => ({
                     id: d.id,
                     title: d.title,
@@ -96,12 +113,12 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                     remainingSeconds: d.remaining_seconds,
                     elapsedSeconds: d.elapsed_seconds,
                     isRunning: d.is_running,
-                    lastTickAt: d.last_tick_at ? parseInt(d.last_tick_at) : undefined, // BigInt comes as string?
+                    lastTickAt: d.last_tick_at ? parseInt(d.last_tick_at) : undefined,
                     color: d.color,
                     size: d.size as any,
                 }));
 
-                // Do catchup logic on fetched data too? Yes, essential.
+                // Catch-up logic
                 const now = Date.now();
                 const caughtUp = mapped.map(t => {
                     if (t.isRunning && t.lastTickAt) {
@@ -129,24 +146,74 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                     return t;
                 });
                 setTimers(caughtUp);
+
+                // --- Automatic Weekly Reset Check ---
+                const d = new Date();
+                const day = d.getDay();
+                const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(d.setDate(diff));
+                monday.setHours(0, 0, 0, 0);
+
+                const lastWeekStart = new Date(monday);
+                lastWeekStart.setDate(monday.getDate() - 7);
+                const lastWeekISO = lastWeekStart.toISOString();
+
+                // Check if we have history for last week
+                const hasLastWeekHistory = loadedHistory.some(h => {
+                    const hTime = new Date(h.weekStart).getTime();
+                    return Math.abs(hTime - lastWeekStart.getTime()) < 1000 * 60 * 60 * 24;
+                });
+
+                const hasDirtyTimers = caughtUp.some(t =>
+                    (t.elapsedSeconds || 0) > 0 || (t.type !== 'stopwatch' && t.remainingSeconds < t.totalSeconds)
+                );
+
+                if (!hasLastWeekHistory && hasDirtyTimers) {
+                    // Archive
+                    const snapshotId = crypto.randomUUID();
+                    const snapshotItems = caughtUp.map(t => ({
+                        title: t.title,
+                        type: t.type,
+                        totalSeconds: t.totalSeconds,
+                        completedSeconds: t.type === 'stopwatch' ? (t.elapsedSeconds || 0) : (t.totalSeconds - t.remainingSeconds),
+                        color: t.color
+                    }));
+
+                    await supabase.from('week_history').insert({
+                        id: snapshotId,
+                        user_id: user.id,
+                        week_start: lastWeekISO,
+                        snapshot_json: snapshotItems
+                    });
+
+                    // Reset DB
+                    for (const t of caughtUp) {
+                        await supabase.from('timers').update({
+                            remaining_seconds: t.totalSeconds,
+                            elapsed_seconds: 0,
+                            is_running: false,
+                            last_tick_at: null
+                        }).eq('id', t.id);
+                    }
+
+                    // Reset Local State
+                    setTimers(prev => prev.map(t => ({
+                        ...t,
+                        remainingSeconds: t.totalSeconds,
+                        elapsedSeconds: 0,
+                        lastTickAt: undefined,
+                        isRunning: false
+                    })));
+
+                    setHistory(prev => [{
+                        id: snapshotId,
+                        weekStart: lastWeekISO,
+                        timersSnapshot: snapshotItems
+                    }, ...prev]);
+                }
             }
-
-            const { data: historyData, error: historyError } = await supabase
-                .from('week_history')
-                .select('*')
-                .eq('user_id', user.id)
-                .order('week_start', { ascending: false });
-
-            if (historyData && !historyError) {
-                const mappedHistory: WeekHistory[] = historyData.map((d: any) => ({
-                    id: d.id,
-                    weekStart: d.week_start,
-                    timersSnapshot: d.timers_snapshot,
-                }));
-                setHistory(mappedHistory);
-            }
-
         };
+
         fetchRemote();
     }, [user]);
 
@@ -343,10 +410,11 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
         }
     };
 
-    const resetWeek = async () => {
+    const resetWeek = async (forcedWeekStart?: string) => {
         // Prepare snapshot
         const snapshotId = crypto.randomUUID();
-        const weekStart = new Date().toISOString();
+        // Use forced start if provided (for auto-archiving past weeks), otherwise now
+        const weekStart = forcedWeekStart || new Date().toISOString();
 
         // We need the CURRENT state of timers to snapshot. 
         // using 'timers' state directly is safe here as this is triggered by user action.
