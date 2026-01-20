@@ -114,6 +114,7 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                     elapsedSeconds: d.elapsed_seconds,
                     isRunning: d.is_running,
                     lastTickAt: d.last_tick_at ? parseInt(d.last_tick_at) : undefined,
+                    updatedAt: d.updated_at,
                     color: d.color,
                     size: d.size as any,
                 }));
@@ -153,6 +154,7 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 const diff = d.getDate() - day + (day === 0 ? -6 : 1);
                 const monday = new Date(d.setDate(diff));
                 monday.setHours(0, 0, 0, 0);
+                const currentWeekStartMs = monday.getTime();
 
                 const lastWeekStart = new Date(monday);
                 lastWeekStart.setDate(monday.getDate() - 7);
@@ -169,47 +171,67 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 );
 
                 if (!hasLastWeekHistory && hasDirtyTimers) {
-                    // Archive
-                    const snapshotId = crypto.randomUUID();
-                    const snapshotItems = caughtUp.map(t => ({
-                        title: t.title,
-                        type: t.type,
-                        totalSeconds: t.totalSeconds,
-                        completedSeconds: t.type === 'stopwatch' ? (t.elapsedSeconds || 0) : (t.totalSeconds - t.remainingSeconds),
-                        color: t.color
-                    }));
+                    // SAFEGUARD: Only reset if the data is STALE (older than this week).
+                    // If any timer has been updated/ticked THIS WEEK, we assume it's current work
+                    // and we missed the reset window. We DO NOT delete it.
+                    const latestActivityMs = Math.max(
+                        0,
+                        ...caughtUp.map(t => Math.max(
+                            t.lastTickAt || 0,
+                            t.updatedAt ? new Date(t.updatedAt).getTime() : 0
+                        ))
+                    );
 
-                    await supabase.from('week_history').insert({
-                        id: snapshotId,
-                        user_id: user.id,
-                        week_start: lastWeekISO,
-                        snapshot_json: snapshotItems
-                    });
+                    // If activity is OLDER than Monday 00:00 -> Archive & Reset.
+                    if (latestActivityMs < currentWeekStartMs) {
+                        // Archive
+                        const snapshotId = crypto.randomUUID();
+                        const snapshotItems = caughtUp.map(t => ({
+                            title: t.title,
+                            type: t.type,
+                            totalSeconds: t.totalSeconds,
+                            completedSeconds: t.type === 'stopwatch' ? (t.elapsedSeconds || 0) : (t.totalSeconds - t.remainingSeconds),
+                            color: t.color
+                        }));
 
-                    // Reset DB
-                    for (const t of caughtUp) {
-                        await supabase.from('timers').update({
-                            remaining_seconds: t.totalSeconds,
-                            elapsed_seconds: 0,
-                            is_running: false,
-                            last_tick_at: null
-                        }).eq('id', t.id);
+                        const { error: insertError } = await supabase.from('week_history').insert({
+                            id: snapshotId,
+                            user_id: user.id,
+                            week_start: lastWeekISO,
+                            snapshot_json: snapshotItems
+                        });
+
+                        if (insertError) {
+                            console.error('Failed to archive week history, aborting reset:', insertError);
+                            return;
+                        }
+
+                        // Reset DB
+                        for (const t of caughtUp) {
+                            await supabase.from('timers').update({
+                                remaining_seconds: t.totalSeconds,
+                                elapsed_seconds: 0,
+                                is_running: false,
+                                last_tick_at: null,
+                                updated_at: new Date().toISOString()
+                            }).eq('id', t.id);
+                        }
+
+                        // Reset Local State
+                        setTimers(prev => prev.map(t => ({
+                            ...t,
+                            remainingSeconds: t.totalSeconds,
+                            elapsedSeconds: 0,
+                            lastTickAt: undefined,
+                            isRunning: false
+                        })));
+
+                        setHistory(prev => [{
+                            id: snapshotId,
+                            weekStart: lastWeekISO,
+                            timersSnapshot: snapshotItems
+                        }, ...prev]);
                     }
-
-                    // Reset Local State
-                    setTimers(prev => prev.map(t => ({
-                        ...t,
-                        remainingSeconds: t.totalSeconds,
-                        elapsedSeconds: 0,
-                        lastTickAt: undefined,
-                        isRunning: false
-                    })));
-
-                    setHistory(prev => [{
-                        id: snapshotId,
-                        weekStart: lastWeekISO,
-                        timersSnapshot: snapshotItems
-                    }, ...prev]);
                 }
             }
         };
@@ -319,7 +341,8 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 elapsed_seconds: timer.elapsedSeconds,
                 is_running: timer.isRunning,
                 color: timer.color,
-                size: timer.size
+                size: timer.size,
+                updated_at: new Date().toISOString()
             });
         }
     };
@@ -340,6 +363,7 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
             }
 
             if (Object.keys(dbUpdates).length > 0) {
+                dbUpdates.updated_at = new Date().toISOString();
                 await supabase.from('timers').update(dbUpdates).eq('id', id);
             }
         }
@@ -371,7 +395,8 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 is_running: nextTimer.isRunning,
                 last_tick_at: nextTimer.lastTickAt || null, // Explicit null for DB
                 remaining_seconds: nextTimer.remainingSeconds,
-                elapsed_seconds: nextTimer.elapsedSeconds
+                elapsed_seconds: nextTimer.elapsedSeconds,
+                updated_at: new Date().toISOString()
             }).eq('id', id);
         }
     };
@@ -405,7 +430,8 @@ export const TimerProvider: React.FC<{ children: ReactNode }> = ({ children }) =
                 remaining_seconds: nextTimer.remainingSeconds,
                 elapsed_seconds: nextTimer.elapsedSeconds,
                 is_running: nextTimer.isRunning,
-                last_tick_at: nextTimer.lastTickAt || null
+                last_tick_at: nextTimer.lastTickAt || null,
+                updated_at: new Date().toISOString()
             }).eq('id', id);
         }
     };

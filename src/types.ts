@@ -12,6 +12,7 @@ export interface Timer {
   color: string;
   size: TimerSize;
   lastTickAt?: number;
+  updatedAt?: string; // ISO string from DB
 }
 
 export interface WeekHistory {

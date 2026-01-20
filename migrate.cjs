@@ -13,14 +13,16 @@ async function migrate() {
 
     try {
         await client.connect();
-        const sql = fs.readFileSync('./schema.sql', 'utf8');
+        // const sql = fs.readFileSync('./schema.sql', 'utf8');
+        const sql = `ALTER TABLE timers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT now();`;
         await client.query(sql);
-        console.log('Migration successful');
+        console.log('Migration successful: Added updated_at column');
     } catch (err) {
         console.error('Migration failed', err);
     } finally {
         await client.end();
     }
 }
+
 
 migrate();
